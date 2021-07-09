@@ -40,7 +40,20 @@ const progressBar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_cla
  * e.g. console.log(xxhashAsHex('System', 128)).
  */
 let prefixes = ['0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9' /* System.Account */];
-const skippedModulesPrefix = ['System', 'Session', 'Babe', 'Grandpa', 'GrandpaFinality', 'FinalityTracker', 'Authorship'];
+const skippedModulesPrefix = [
+  'System', 
+  'Session', 
+  'Babe', 
+  'Grandpa', 'GrandpaFinality', 'FinalityTracker',
+  'Sudo', 'Staking',
+  'Authorship',
+  'AuthorityDiscovery',
+  'ImOnline',
+  'Elections',
+  'ElectionProviderMultiPhase',
+  'Historical',
+  'Offences',
+];
 
 async function main() {
   if (!fs.existsSync(binaryPath)) {
@@ -69,15 +82,24 @@ async function main() {
     });
   }
 
+  // {
+  //   console.log(xxhashAsHex('System', 128))
+  //   console.log(api.query.system.account.keyPrefix())
+  //   console.log(api.query.system.lastRuntimeUpgrade.key())
+  //   console.log(api.query.staking.forceEra.key())
+  //   process.exit(0);
+  // }
+
   if (fs.existsSync(storagePath)) {
     console.log(chalk.yellow('Reusing cached storage. Delete ./data/storage.json and rerun the script if you want to fetch latest storage'));
   } else {
     // Download state of original chain
     console.log(chalk.green('Fetching current state of the live chain. Please wait, it can take a while depending on the size of your chain.'));
+    let at = (await api.rpc.chain.getBlockHash()).toString();
     progressBar.start(totalChunks, 0);
     const stream = fs.createWriteStream(storagePath, { flags: 'a' });
     stream.write("[");
-    await fetchChunks("0x", chunksLevel, stream);
+    await fetchChunks("0x", chunksLevel, stream, at);
     stream.write("]");
     stream.end();
     progressBar.stop();
@@ -95,16 +117,16 @@ async function main() {
   });
 
   // Generate chain spec for original and forked chains
-  execSync(binaryPath + ' build-spec --raw > ' + originalSpecPath);
-  execSync(binaryPath + ' build-spec --dev --raw > ' + forkedSpecPath);
+  execSync(binaryPath + ' build-spec --disable-default-bootnode --chain local --raw > ' + originalSpecPath);
+  execSync(binaryPath + ' build-spec --disable-default-bootnode --chain local --raw > ' + forkedSpecPath);
 
   let storage = JSON.parse(fs.readFileSync(storagePath, 'utf8'));
   let originalSpec = JSON.parse(fs.readFileSync(originalSpecPath, 'utf8'));
   let forkedSpec = JSON.parse(fs.readFileSync(forkedSpecPath, 'utf8'));
 
   // Modify chain name and id
-  forkedSpec.name = originalSpec.name + '-fork';
-  forkedSpec.id = originalSpec.id + '-fork';
+  forkedSpec.name = originalSpec.name;
+  forkedSpec.id = originalSpec.id;
   forkedSpec.protocolId = originalSpec.protocolId;
 
   // Grab the items to be moved, then iterate through and insert into storage
@@ -129,9 +151,9 @@ async function main() {
 
 main();
 
-async function fetchChunks(prefix, levelsRemaining, stream) {
+async function fetchChunks(prefix, levelsRemaining, stream, at) {
   if (levelsRemaining <= 0) {
-    const pairs = await provider.send('state_getPairs', [prefix]);
+    const pairs = await provider.send('state_getPairs', [prefix, at]);
     if (pairs.length > 0) {
       separator ? stream.write(",") : separator = true;
       stream.write(JSON.stringify(pairs).slice(1, -1));
@@ -144,12 +166,12 @@ async function fetchChunks(prefix, levelsRemaining, stream) {
   if (process.env.QUICK_MODE && levelsRemaining == 1) {
     let promises = [];
     for (let i = 0; i < 256; i++) {
-      promises.push(fetchChunks(prefix + i.toString(16).padStart(2, "0"), levelsRemaining - 1, stream));
+      promises.push(fetchChunks(prefix + i.toString(16).padStart(2, "0"), levelsRemaining - 1, stream, at));
     }
     await Promise.all(promises);
   } else {
     for (let i = 0; i < 256; i++) {
-      await fetchChunks(prefix + i.toString(16).padStart(2, "0"), levelsRemaining - 1, stream);
+      await fetchChunks(prefix + i.toString(16).padStart(2, "0"), levelsRemaining - 1, stream, at);
     }
   }
 }
